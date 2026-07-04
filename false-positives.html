@@ -1,0 +1,512 @@
+<!doctype html><meta charset="utf-8">
+<title>Vulnerability Findings</title>
+<style>
+ body{font:15px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#1a1a1a}
+ .card{border:1px solid #ddd;border-radius:10px;padding:1rem 1.25rem;margin:1rem 0;box-shadow:0 1px 3px #0001}
+ .hd{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;font-size:13px}
+ .sev{color:#fff;padding:2px 10px;border-radius:20px;font-weight:600}
+ .conf{color:#555} .file{margin-left:auto;font-family:monospace;color:#333}
+ .v{color:#2e7d32;font-weight:600}
+ .lbl{font-weight:600;margin:.8rem 0 .2rem;color:#444;font-size:13px;text-transform:uppercase;letter-spacing:.03em}
+ pre{background:#f6f8fa;padding:.8rem;border-radius:6px;overflow:auto;font-size:13px}
+ .cwe{color:#888;font-size:12px}
+ h1{border-bottom:2px solid #eee;padding-bottom:.4rem}
+</style>
+<h1>Vulnerability Findings Report</h1>
+<p>Total findings: <b>29</b></p>
+
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#e65100">High</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setting/setting.go:48-49</span>
+          </div>
+          <h3>1. Unvalidated user-controlled input sets a security-sensitive &#x27;Level&#x27; cookie. An attacker can set arbitrary priv</h3>
+          <p class="lbl">Attack Path</p><p>Authenticated user sends POST /setlevel with level=admin (or any privileged value). SetCookieLevel writes the raw value into the Level cookie. Subsequent requests read this cookie via util.GetCookie (line 91) and trust it for authorization decisions.</p>
+          <p class="lbl">Evidence</p><p>level is taken directly from r.FormValue(&quot;level&quot;) with no whitelist validation before being passed to SetCookieLevel. getCurrentLevel (line 90-93) reads this cookie and returns it as the authoritative level.</p>
+          <p class="lbl">Affected Code</p><pre>48| 		level := r.FormValue(&quot;level&quot;)
+49| 		util.SetCookieLevel(w, r, level)</pre>
+          <p class="lbl">Recommendation</p><p>Validate &#x27;level&#x27; against an explicit whitelist of permitted values (e.g., [&quot;low&quot;, &quot;medium&quot;, &quot;high&quot;]) before calling SetCookieLevel. Reject any value not in the whitelist with a 400 response. Prefer storing the authoritative level server-side (e.g., in the session or database) rather than trusting a client-supplied cookie.</p>
+          <p class="cwe">CWE-639</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#e65100">High</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setup/setup.go:69-69</span>
+          </div>
+          <h3>2. Cross-Site Scripting (XSS) via unsanitized URL in HTML link. `config.Fullurl` is interpolated directly into an HTML anch</h3>
+          <p class="lbl">Attack Path</p><p>If config.Fullurl contains a value like `javascript:alert(1)//` or includes unquoted HTML attributes, the resulting anchor tag will execute arbitrary JavaScript when clicked. The href attribute is also unquoted, making attribute injection trivial.</p>
+          <p class="lbl">Evidence</p><p>config.Fullurl is interpolated unquoted into href at line 69 (no quotes around the href value), and the result is passed to util.ToHTML which marks it as safe HTML.</p>
+          <p class="lbl">Affected Code</p><pre>69| loginUrl := util.ToHTML(fmt.Sprintf(`&lt;a href=%slogin&gt;Login&lt;/a&gt;`, config.Fullurl))</pre>
+          <p class="lbl">Recommendation</p><p>Quote the href attribute and validate/escape config.Fullurl: `fmt.Sprintf(&quot;&lt;a href=\&quot;%s\&quot;&gt;Login&lt;/a&gt;&quot;, html.EscapeString(config.Fullurl))`. Also validate that Fullurl is a legitimate HTTP/HTTPS URL.</p>
+          <p class="cwe">CWE-79</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#e65100">High</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setup/setup.go:26-27</span>
+          </div>
+          <h3>3. Unauthenticated and unrestricted access to database setup/reset functionality. The /setup and /setupaction endpoints are</h3>
+          <p class="lbl">Attack Path</p><p>An unauthenticated attacker navigates to /setup or POSTs to /setupaction with act=cr to drop and recreate database tables, causing data loss or denial of service.</p>
+          <p class="lbl">Evidence</p><p>No authentication middleware is applied to these routes. setupViewHandler explicitly deletes any existing session at line 39-42, and setupActionHandler performs DDL operations with no access check.</p>
+          <p class="lbl">Affected Code</p><pre>26| r.GET(&quot;/setup&quot;, mw.LoggingMiddleware(mw.CapturePanic(setupViewHandler)))
+27| r.POST(&quot;/setupaction&quot;, mw.LoggingMiddleware(mw.CapturePanic(setupActionHandler)))</pre>
+          <p class="lbl">Recommendation</p><p>Restrict setup endpoints to localhost only, require a one-time setup token, or disable these routes entirely after initial setup. At minimum, add CSRF protection to the POST endpoint.</p>
+          <p class="cwe">CWE-306</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#e65100">High</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/config/config.go:17-17</span>
+          </div>
+          <h3>4. Sessionkey stored in plaintext in the same JSON config file. Exposure of this value allows an attacker to forge session </h3>
+          <p class="lbl">Attack Path</p><p>Same as above — attacker reads config/config.json and obtains the session signing key, then forges valid session cookies to authenticate as arbitrary users.</p>
+          <p class="lbl">Evidence</p><p>Sessionkey is a plain string field loaded from an unprotected JSON file alongside other credentials.</p>
+          <p class="lbl">Affected Code</p><pre>17|  Sessionkey string</pre>
+          <p class="lbl">Recommendation</p><p>Load the session key exclusively from an environment variable or secrets manager. Never persist it in a file that could be accidentally exposed.</p>
+          <p class="cwe">CWE-312</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#e65100">High</span>
+            <span class="conf">confidence: Low</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setup/setup.go:50-51</span>
+          </div>
+          <h3>5. Cross-Site Scripting (XSS) via unsanitized error message injected into HTML. The error from `err.Error()` is interpolate</h3>
+          <p class="lbl">Attack Path</p><p>An attacker who can influence the database connection string or configuration (e.g., via environment variables or a misconfigured deployment) can inject HTML/JS into the error message, which is then rendered unescaped in the setup page.</p>
+          <p class="lbl">Evidence</p><p>err.Error() is passed as %s into a raw HTML string at line 50-51, then passed to util.ToHTML which likely marks it safe for rendering without escaping.</p>
+          <p class="lbl">Affected Code</p><pre>50| info = fmt.Sprintf(`&lt;div id=&quot;info&quot; class=&quot;alert alert-danger&quot;&gt;%s
+						&lt;a href=&quot;#&quot; class=&quot;close&quot; data-dismiss=&quot;alert&quot; aria-label=&quot;close&quot;&gt;&amp;times;&lt;/a&gt;&lt;/div&gt;`, err.Error())</pre>
+          <p class="lbl">Recommendation</p><p>HTML-escape the error message before interpolating it into HTML. Use html.EscapeString(err.Error()) instead of err.Error() directly.</p>
+          <p class="cwe">CWE-79</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">user/session/session.go:83-90</span>
+          </div>
+          <h3>6. Errors from `store.Get` in IsLoggedIn and DeleteSession are logged but execution continues with a potentially nil or inv</h3>
+          <p class="lbl">Attack Path</p><p>Attacker sends a malformed or tampered cookie → store.Get returns an error and a new empty session → IsLoggedIn proceeds to check the empty session → depending on gorilla/sessions behavior, could return false (safe) but the unhandled error path is fragile and may behave unexpectedly in future versions.</p>
+          <p class="lbl">Evidence</p><p>Lines 84–86 log the error but do not return. Line 87 accesses `s.Values` on a potentially invalid session. Same pattern at lines 63–65 in DeleteSession.</p>
+          <p class="lbl">Affected Code</p><pre>83|     s, err := store.Get(r, &quot;govwa&quot;)
+84|     if err != nil {
+85|         log.Println(err.Error())
+86|     }
+87|     if auth, ok := s.Values[&quot;govwa_session&quot;].(bool); !ok || !auth {</pre>
+          <p class="lbl">Recommendation</p><p>Return `false` (or an error) immediately after logging the error from `store.Get` in IsLoggedIn and DeleteSession, rather than continuing with an invalid session.</p>
+          <p class="cwe">CWE-755</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/database/database.go:18-30</span>
+          </div>
+          <h3>7. Credentials (username and password) are embedded in the DSN string using fmt.Sprintf. If the DSN is ever logged, exposed</h3>
+          <p class="lbl">Attack Path</p><p>If an error occurs during sql.Open or db.Exec and the error message includes the DSN, or if debug logging is enabled, the plaintext password appears in logs or stack traces accessible to anyone with log access.</p>
+          <p class="lbl">Evidence</p><p>DSN format `user:password@tcp(host:port)/db` embeds the password in a string that is passed to the driver and may surface in error output.</p>
+          <p class="lbl">Affected Code</p><pre>18| dsn = fmt.Sprintf(&quot;%s:%s@tcp(%s:%s)/&quot;, config.User, config.Password, config.Sqlhost, config.Sqlport)
+30| dsn = fmt.Sprintf(&quot;%s:%s@tcp(%s:%s)/%s&quot;, config.User, config.Password, config.Sqlhost, config.Sqlport, config.Dbname)</pre>
+          <p class="lbl">Recommendation</p><p>Ensure the `dsn` variable is never logged. Consider using the mysql driver&#x27;s `Config` struct with `FormatDSN()` and confirm `InterpolateParams` is false. Scrub DSN strings from any error wrapping.</p>
+          <p class="cwe">CWE-312</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/template.go:18-40</span>
+          </div>
+          <h3>8. Templates are parsed from a glob on every request in both SafeRender and UnSafeRender. Beyond the performance impact, th</h3>
+          <p class="lbl">Attack Path</p><p>If an attacker can write a file to the templates/ directory, the malicious template is parsed and executed on the next request, potentially exfiltrating data or altering page content.</p>
+          <p class="lbl">Evidence</p><p>ParseGlob(&quot;templates/*&quot;) is called on every invocation with no caching or integrity check.</p>
+          <p class="lbl">Affected Code</p><pre>18| 	template := template.Must(template.ParseGlob(&quot;templates/*&quot;))
+40| 	template := template.Must(template.ParseGlob(&quot;templates/*&quot;))</pre>
+          <p class="lbl">Recommendation</p><p>Parse templates once at startup and store the result. Ensure the templates directory has strict write permissions.</p>
+          <p class="cwe">CWE-494</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/csa/csa.go:52-52</span>
+          </div>
+          <h3>9. Timing side-channel in OTP comparison. The string comparison `sotp != Md5Sum(otp)` is not constant-time, allowing an att</h3>
+          <p class="lbl">Attack Path</p><p>1. Attacker sends many OTP guesses and measures server response times. 2. Go&#x27;s `!=` on strings short-circuits on the first differing byte. 3. Attacker uses timing differences to narrow down the correct hash byte-by-byte.</p>
+          <p class="lbl">Evidence</p><p>Line 52 uses the `!=` operator for comparing security-sensitive hash strings instead of `crypto/subtle.ConstantTimeCompare`.</p>
+          <p class="lbl">Affected Code</p><pre>52| if sotp != Md5Sum(otp){</pre>
+          <p class="lbl">Recommendation</p><p>Replace `sotp != Md5Sum(otp)` with `subtle.ConstantTimeCompare([]byte(sotp), []byte(Md5Sum(otp))) != 1` using `crypto/subtle`.</p>
+          <p class="cwe">CWE-208</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/csa/csa.go:51-57</span>
+          </div>
+          <h3>10. Client-side authentication logic. The endpoint name `/verify` and the pattern of returning `Code=0/1` to the client sugg</h3>
+          <p class="lbl">Attack Path</p><p>1. Attacker intercepts the HTTP response from /verify using a proxy (e.g., Burp Suite). 2. Attacker changes `{&quot;code&quot;:0}` to `{&quot;code&quot;:1}`. 3. Client-side JavaScript grants access based on the modified response.</p>
+          <p class="lbl">Evidence</p><p>The handler returns a numeric code to the client (lines 51-57). The struct name `XSS` and package name `csa` (Client-Side Authentication) confirm this is an intentional demonstration of the vulnerability pattern.</p>
+          <p class="lbl">Affected Code</p><pre>51| res := JsonRes{}
+52| if sotp != Md5Sum(otp){
+53| 	res.Code = 0
+54| }else{
+55| 	res.Code = 1
+56| }
+57| util.RenderAsJson(w, res)</pre>
+          <p class="lbl">Recommendation</p><p>Authentication and authorization decisions must be enforced server-side. The server should set a session flag or issue a token upon successful verification, not return a boolean code for the client to act on.</p>
+          <p class="cwe">CWE-602</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/idor/idor.go:163-167</span>
+          </div>
+          <h3>11. Use of MD5 for integrity/signature purposes: MD5 is cryptographically broken and collision-prone. Even if a secret were </h3>
+          <p class="lbl">Attack Path</p><p>An attacker can precompute MD5 hashes for all plausible uid values (typically small integers) in milliseconds, defeating any uid-based integrity check.</p>
+          <p class="lbl">Evidence</p><p>crypto/md5 is imported and used as the sole integrity mechanism for the idor2 flow.</p>
+          <p class="lbl">Affected Code</p><pre>163| func Md5Sum(text string) string {
+164|   hasher := md5.New()
+165|   hasher.Write([]byte(text))
+166|   return hex.EncodeToString(hasher.Sum(nil))
+167| }</pre>
+          <p class="lbl">Recommendation</p><p>Use crypto/sha256 with an HMAC (golang.org/x/crypto or standard crypto/hmac) and a secret key stored in server configuration.</p>
+          <p class="cwe">CWE-327</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#f9a825">Medium</span>
+            <span class="conf">confidence: Low</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setup/setup.go:27-27</span>
+          </div>
+          <h3>12. Missing CSRF protection on the /setupaction POST endpoint. There is no CSRF token validation, allowing any website to tr</h3>
+          <p class="lbl">Attack Path</p><p>An attacker hosts a page with a form that auto-submits a POST to /setupaction?act=cr. Any authenticated or unauthenticated user visiting that page triggers a database reset.</p>
+          <p class="lbl">Evidence</p><p>No CSRF middleware is applied to the /setupaction route, and setupActionHandler performs no token validation.</p>
+          <p class="lbl">Affected Code</p><pre>27| r.POST(&quot;/setupaction&quot;, mw.LoggingMiddleware(mw.CapturePanic(setupActionHandler)))</pre>
+          <p class="lbl">Recommendation</p><p>Add CSRF middleware to the /setupaction route, or use the SameSite cookie attribute and verify the Origin/Referer header.</p>
+          <p class="cwe">CWE-352</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setting/setting.go:79-79</span>
+          </div>
+          <h3>13. The OS name is printed to stdout via fmt.Printf for unrecognized operating systems, potentially leaking server environme</h3>
+          <p class="lbl">Attack Path</p><p>If the server runs on an OS other than darwin or linux, the OS identifier is written to stdout. In containerized or cloud environments, stdout is often aggregated into log systems accessible to multiple parties.</p>
+          <p class="lbl">Evidence</p><p>fmt.Printf(&quot;%s.&quot;, os) writes runtime.GOOS to stdout with no log-level gating or redaction.</p>
+          <p class="lbl">Affected Code</p><pre>79| 		fmt.Printf(&quot;%s.&quot;, os)</pre>
+          <p class="lbl">Recommendation</p><p>Remove the Printf call or replace it with a structured logger at debug level. Return a safe default string (e.g., &quot;Unknown&quot;) without disclosing the actual OS identifier.</p>
+          <p class="cwe">CWE-209</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setup/function.go:35-36</span>
+          </div>
+          <h3>14. Package-level mutable `err` variable shared across functions creates a race condition if these functions are ever called</h3>
+          <p class="lbl">Attack Path</p><p>Concurrent invocations of `createUsersTable` and `createProfileTable` would read/write the same `err` variable, producing unpredictable error-handling behavior.</p>
+          <p class="lbl">Evidence</p><p>Both functions assign to the package-level `err` on lines 49, 53, 57, 65, 69, 73 without synchronization.</p>
+          <p class="lbl">Affected Code</p><pre>35| var DB *sql.DB
+36| var err error</pre>
+          <p class="lbl">Recommendation</p><p>Declare `err` as a local variable inside each function rather than at package scope.</p>
+          <p class="cwe">CWE-362</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">setup/function.go:17-30</span>
+          </div>
+          <h3>15. latin1 (ISO-8859-1) charset used for both tables. This is not a direct security vulnerability but can enable charset-bas</h3>
+          <p class="lbl">Attack Path</p><p>Certain multi-byte character sequences that are valid in latin1 but not UTF-8 can confuse application-layer sanitization, potentially aiding injection or truncation attacks.</p>
+          <p class="lbl">Evidence</p><p>Both CREATE TABLE statements specify `DEFAULT CHARSET=latin1`.</p>
+          <p class="lbl">Affected Code</p><pre>17| ) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1
+30| ) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1</pre>
+          <p class="lbl">Recommendation</p><p>Use `DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci` for all tables.</p>
+          <p class="cwe">CWE-116</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">user/user.go:108-114</span>
+          </div>
+          <h3>16. Use of a temporary (302) redirect for logout allows the redirect to be replayed as a GET, and does not invalidate the se</h3>
+          <p class="lbl">Attack Path</p><p>Minor: if DeleteSession fails silently, the session token remains valid. A 302 redirect is functionally acceptable for logout but a 303 See Other is semantically more correct to prevent form resubmission.</p>
+          <p class="lbl">Evidence</p><p>No error handling on s.DeleteSession at line 110. Redirect uses 302 at line 113.</p>
+          <p class="lbl">Affected Code</p><pre>108| func Logout(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+109|     s := session.New()
+110|     s.DeleteSession(w, r)
+111|     cookies := []string{&quot;Level&quot;, &quot;Uid&quot;}
+112|     util.DeleteCookie(w,cookies)
+113|     util.Redirect(w, r, &quot;login&quot;, 302)
+114| }</pre>
+          <p class="lbl">Recommendation</p><p>Check the return value of DeleteSession and handle errors. Use HTTP 303 for the post-logout redirect.</p>
+          <p class="cwe">CWE-613</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">user/user.go:132-132</span>
+          </div>
+          <h3>17. A package-level sql.DB variable is declared but never used; the local db variable inside checkUserQuery shadows it. This</h3>
+          <p class="lbl">Attack Path</p><p>Not directly exploitable, but a future developer might accidentally use the uninitialized package-level db (which is nil) instead of the locally connected one, causing a nil pointer dereference.</p>
+          <p class="lbl">Evidence</p><p>Line 132 declares var db *sql.DB at package scope. Line 136 inside checkUserQuery declares a new local db via :=, completely shadowing the package-level variable. The package-level variable is never assigned or read.</p>
+          <p class="lbl">Affected Code</p><pre>132| var db *sql.DB</pre>
+          <p class="lbl">Recommendation</p><p>Remove the unused package-level db variable at line 132.</p>
+          <p class="cwe">CWE-563</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/config/config.go:5-24</span>
+          </div>
+          <h3>18. Use of deprecated ioutil.ReadFile. While not a direct vulnerability, deprecated APIs signal unmaintained code patterns a</h3>
+          <p class="lbl">Attack Path</p><p>No direct attack path; indirect risk from using deprecated APIs in a security-sensitive code path.</p>
+          <p class="lbl">Evidence</p><p>ioutil.ReadFile is deprecated since Go 1.16; the replacement is os.ReadFile.</p>
+          <p class="lbl">Affected Code</p><pre>5|  &quot;io/ioutil&quot;
+24|  raw, err := ioutil.ReadFile(&quot;config/config.json&quot;)</pre>
+          <p class="lbl">Recommendation</p><p>Replace ioutil.ReadFile with os.ReadFile.</p>
+          <p class="cwe">None</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/config/config.go:24-24</span>
+          </div>
+          <h3>19. Config file path is hardcoded as a relative path (&#x27;config/config.json&#x27;), making the application&#x27;s behavio</h3>
+          <p class="lbl">Attack Path</p><p>If the working directory is manipulated or unexpected, the wrong config file could be loaded, or the load silently fails and the app starts with empty credentials.</p>
+          <p class="lbl">Evidence</p><p>Relative path with no validation or override mechanism.</p>
+          <p class="lbl">Affected Code</p><pre>24|  raw, err := ioutil.ReadFile(&quot;config/config.json&quot;)</pre>
+          <p class="lbl">Recommendation</p><p>Use an absolute path derived from an environment variable (e.g., CONFIG_PATH) or the executable&#x27;s location, and fail fast if the path is not set.</p>
+          <p class="cwe">CWE-426</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/middleware/middleware.go:31-31</span>
+          </div>
+          <h3>20. Open redirect potential in AuthCheck. The redirect target is hardcoded to `/login`, which is safe here, but the pattern </h3>
+          <p class="lbl">Attack Path</p><p>Under concurrent HTTP requests, if `session.New()` returns an object with mutable shared state and `sess.IsLoggedIn(r)` is not goroutine-safe, two simultaneous requests could corrupt session state, potentially allowing authentication bypass.</p>
+          <p class="lbl">Evidence</p><p>sess is created once and shared across all invocations of the returned handler closure, which is called concurrently by the HTTP server.</p>
+          <p class="lbl">Affected Code</p><pre>31|    var sess = session.New()</pre>
+          <p class="lbl">Recommendation</p><p>Move `sess := session.New()` inside the returned closure so each request gets its own instance, or verify that the session type is documented as safe for concurrent use.</p>
+          <p class="cwe">CWE-362</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/database/database.go:42-48</span>
+          </div>
+          <h3>21. The global variable DB (line 42) is never assigned by CheckDatabase(); a local shadow variable is created instead via `:</h3>
+          <p class="lbl">Attack Path</p><p>Code elsewhere in the package that calls database.DB.Query(...) after CheckDatabase() will panic with a nil pointer dereference because the package-level DB was never assigned.</p>
+          <p class="lbl">Evidence</p><p>`:=` on line 48 declares a new local `DB` variable that shadows the package-level `DB`. The package-level variable remains nil.</p>
+          <p class="lbl">Affected Code</p><pre>42| var DB *sql.DB
+...
+48| DB, err := Connect()</pre>
+          <p class="lbl">Recommendation</p><p>Declare err separately and use `=` to assign to the package-level DB:
+```go
+var err error
+DB, err = Connect()
+```</p>
+          <p class="cwe">CWE-476</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/cookie.go:31-39</span>
+          </div>
+          <h3>22. Cookie missing Path attribute. Without an explicit Path, the cookie scope is determined by the request path at the time </h3>
+          <p class="lbl">Attack Path</p><p>If the cookie is set on a specific path (e.g., /login), it will not be sent on other paths (e.g., /api), causing inconsistent authorization checks or silent failures in CheckLevel.</p>
+          <p class="lbl">Evidence</p><p>Path is commented out on line 33. Without it, the browser defaults to the directory of the request URI.</p>
+          <p class="lbl">Affected Code</p><pre>31| func SetCookie(w http.ResponseWriter, name, value string){
+32| 	cookie := http.Cookie{
+33| 		//Path : &quot;/&quot;,
+34| 		//Domain : &quot;localhost&quot;,
+35| 		Name: name, 
+36| 		Value: value,
+37| 	}
+38| 	http.SetCookie(w, &amp;cookie)
+39| }</pre>
+          <p class="lbl">Recommendation</p><p>Uncomment and set Path: &quot;/&quot; to ensure consistent cookie scope across the application.</p>
+          <p class="cwe">CWE-565</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/template.go:19-22</span>
+          </div>
+          <h3>23. SafeRender logs template execution errors but still returns HTTP 200 with a potentially partial response body. Callers h</h3>
+          <p class="lbl">Attack Path</p><p>A template error causes partial HTML to be sent to the client. The client interprets the 200 status as success and may render broken or sensitive partial content.</p>
+          <p class="lbl">Evidence</p><p>Error is only logged; no HTTP error response is written and execution continues after the error.</p>
+          <p class="lbl">Affected Code</p><pre>19| 	err := template.ExecuteTemplate(w, name, data)
+20| 	if err != nil{
+21| 		log.Println(err.Error())
+22| 	}</pre>
+          <p class="lbl">Recommendation</p><p>If the error occurs before any bytes are written to w, call http.Error(w, &quot;internal error&quot;, http.StatusInternalServerError). Use a buffered response writer to allow rollback on error.</p>
+          <p class="cwe">CWE-390</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/idor/function.go:11-57</span>
+          </div>
+          <h3>24. Package-level mutable state for DB and err: Assigning to the package-level `err` variable inside concurrent goroutines c</h3>
+          <p class="lbl">Attack Path</p><p>Concurrent requests race on the shared `err` variable, potentially masking errors or causing incorrect control flow.</p>
+          <p class="lbl">Evidence</p><p>err is declared at package scope (line 12) and written without synchronization in both methods.</p>
+          <p class="lbl">Affected Code</p><pre>11| var DB *sql.DB
+12| var err error
+...
+35| 	DB, err = database.Connect()
+57| 	DB, err = database.Connect()</pre>
+          <p class="lbl">Recommendation</p><p>Use local variables for err inside each function. Remove the package-level err declaration.</p>
+          <p class="cwe">CWE-362</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/idor/function.go:82-86</span>
+          </div>
+          <h3>25. HTMLEscapeString strips tags with a regex before calling html.EscapeString, but the regex is incomplete and can be bypas</h3>
+          <p class="lbl">Attack Path</p><p>Input such as `&lt;&lt;script&gt;script&gt;alert(1)&lt;&lt;/script&gt;/script&gt;` may survive the regex strip and, if the result is later rendered without escaping, execute as script.</p>
+          <p class="lbl">Evidence</p><p>The regex `&lt;[^&gt;]*&gt;` does not handle nested angle brackets, HTML comments, or other edge cases. html.EscapeString alone is sufficient for XSS prevention when output is placed in HTML context.</p>
+          <p class="lbl">Affected Code</p><pre>82| func HTMLEscapeString(text string) string {
+83| 	filter := regexp.MustCompile(&quot;&lt;[^&gt;]*&gt;&quot;)
+84| 	output := filter.ReplaceAllString(text, &quot;&quot;)
+85| 	return html.EscapeString(output)
+86| }</pre>
+          <p class="lbl">Recommendation</p><p>Remove the regex stripping step and rely solely on html.EscapeString, or use a vetted HTML sanitization library (e.g., bluemonday) if stripping tags is a requirement.</p>
+          <p class="cwe">CWE-79</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/sqli/function.go:11-60</span>
+          </div>
+          <h3>26. Package-level mutable state for DB connection and error. `DB` and `err` are declared as package-level variables (lines 1</h3>
+          <p class="lbl">Attack Path</p><p>Under concurrent HTTP requests, two goroutines may simultaneously write to the shared `err` variable or reassign `DB`, causing one request to observe the other&#x27;s error or connection state, potentially leading to incorrect query execution or nil pointer dereferences.</p>
+          <p class="lbl">Evidence</p><p>Lines 11–12 declare `DB` and `err` at package scope. Lines 35 and 60 reassign both inside instance methods that may be called concurrently.</p>
+          <p class="lbl">Affected Code</p><pre>11| var DB *sql.DB
+12| var err error
+...
+35|  DB, err = database.Connect()
+...
+60|  DB, err = database.Connect()</pre>
+          <p class="lbl">Recommendation</p><p>Initialize the DB connection once (e.g., in `init()` or application startup) and store it in a local or struct-scoped variable. Declare `err` as a local variable inside each function rather than reusing the package-level one.</p>
+          <p class="cwe">CWE-362</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/sqli/function.go:35-60</span>
+          </div>
+          <h3>27. New database connection opened on every query call without guaranteed cleanup. `database.Connect()` is called on every i</h3>
+          <p class="lbl">Attack Path</p><p>Under sustained load, repeated calls open new connections that are never closed, exhausting the database connection limit and causing denial of service.</p>
+          <p class="lbl">Evidence</p><p>Lines 35 and 60 call `database.Connect()` each time the function is invoked. There is no `defer DB.Close()` and the connection is stored in a package-level variable that gets overwritten on the next call.</p>
+          <p class="lbl">Affected Code</p><pre>35|  DB, err = database.Connect()
+...
+60|  DB, err = database.Connect()</pre>
+          <p class="lbl">Recommendation</p><p>Establish the database connection once at application startup (the commented-out `init()` block on lines 14–19 was the right idea) and reuse the `*sql.DB` pool, which is safe for concurrent use.</p>
+          <p class="cwe">CWE-400</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: High</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">vulnerability/sqli/sqli.go:81-81</span>
+          </div>
+          <h3>28. Insufficient error logging in sqli2Handler. When the unsafe SQL query fails, only a generic &#x27;sql error&#x27; string</h3>
+          <p class="lbl">Attack Path</p><p>During an active SQL injection attack, errors are silently swallowed with no actionable log output, hindering detection and forensic analysis.</p>
+          <p class="lbl">Evidence</p><p>err.Error() is not included in the log message, unlike the safe path at line 87 which logs the actual error.</p>
+          <p class="lbl">Affected Code</p><pre>81| log.Printf(&quot;sql error&quot;)</pre>
+          <p class="lbl">Recommendation</p><p>Log the actual error: `log.Printf(&quot;sql error: %s&quot;, err.Error())`. Ensure logs are monitored for anomalous query errors as a detection signal.</p>
+          <p class="cwe">CWE-778</p>
+        </div>
+        <div class="card">
+          <div class="hd">
+            <span class="sev" style="background:#2e7d32">Low</span>
+            <span class="conf">confidence: Low</span>
+            <span class="conf">code</span>
+            <span class="v">✓ false_positive</span>
+            <span class="file">util/database/database.go:6-6</span>
+          </div>
+          <h3>29. github.com/go-sql-driver/mysql v1.5.0 is outdated. Versions prior to v1.6.0 have known issues including a DSN parsing bu</h3>
+          <p class="lbl">Attack Path</p><p>A password containing special characters could be misinterpreted by the DSN parser, potentially connecting to an unintended host or with incorrect credentials.</p>
+          <p class="lbl">Evidence</p><p>Dependency pinned at v1.5.0 per the project manifest.</p>
+          <p class="lbl">Affected Code</p><pre>6| _ &quot;github.com/go-sql-driver/mysql&quot;</pre>
+          <p class="lbl">Recommendation</p><p>Upgrade to github.com/go-sql-driver/mysql v1.7.1 or later.</p>
+          <p class="cwe">CWE-1395</p>
+        </div>

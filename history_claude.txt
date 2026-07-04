@@ -1,0 +1,215 @@
+Có thể kết hợp tool này với các skills.md tìm lỗ hổng không?
+
+Có, kết hợp được — và rất hợp lý vì chúng bù trừ cho nhau. Có 3 cách tích hợp.
+
+Kiến trúc: harness vs skill khác nhau ở đâu
+Harness này chạy model local qua vòng lặp riêng (rẻ, riêng tư, quét được cả nghìn file, xuất NDJSON).
+Skill tìm lỗ hổng (như /security-review, /code-review) chạy bên trong Claude Code — tôi (model lớn) là bộ não, suy luận sâu trên diff/một số file.
+→ Kết hợp = local model làm phần thô diện rộng → tôi triage/xác minh phần giá trị cao.
+
+3 cách kết hợp
+1. Bọc harness thành một skill (SKILL.md) — bạn gõ /vuln-harness ./src, tôi chạy scanner.py, đọc findings.ndjson, rồi xếp hạng + xác minh + viết báo cáo. Đây là cách "đúng bài" nhất.
+
+2. Pipeline nối tiếp với /security-review (skill built-in trong session này):
+
+scanner.py (local, quét toàn repo) → findings.ndjson
+        → tôi lọc top Critical/High → /security-review kiểm chứng sâu diff liên quan
+Local model gánh khối lượng lớn; /security-review (dùng tôi) chỉ soi kỹ số ít điểm nóng → tiết kiệm mà vẫn sâu.
+
+3. Nối với skill khác trong session:
+
+/graphify — biến findings.ndjson thành knowledge graph (cụm theo file/CWE/chain) để nhìn toàn cảnh.
+/code-review — chạy harness trên diff thay vì cả repo.
+So sánh nhanh
+Harness (local)	/security-review (Claude)
+Phạm vi	Cả repo, nghìn file	Diff / vài file
+Chi phí	Rẻ, offline	Tốn token hơn
+Chiều sâu	Trung bình (triage)	Cao (reasoning)
+Riêng tư	Không rời máy	Gửi lên model
+Chiến lược tốt nhất: harness làm first-pass filter toàn repo → /security-review hoặc tôi làm deep-dive trên các finding sống sót sau verify.
+
+Tôi có thể tạo luôn SKILL.md để bạn gõ /vuln-harness <path> là chạy trọn: gọi scanner → đọc NDJSON → triage → (tùy chọn) đẩy top findings sang /security-review và /graphify.
+
+Bạn muốn tôi tạo skill này ở đâu?
+
+Tạo skill /vuln-harness ở phạm vi nào?
+
+Trong thư mục tool
+
+Skill nên tự động nối tiếp bước nào sau khi harness chạy xong?
+
+Triage + báo cáo, Deep-dive /security-review, Knowledge graph /graphify
+
+Đã rõ. Tôi tạo SKILL.md trong thư mục tool, gồm 3 bước nối tiếp: triage → deep-dive → graphify.
+
+Created
+SKILL.md
++94
+-0
+Giờ thêm mục vào README và hướng dẫn kích hoạt (skill nằm trong thư mục tool nên cần copy/symlink vào skills dir để /vuln-harness hoạt động):
+
+
+Edited a file, ran a command
+Dọn artifact test còn sót:
+
+Removed leftover test artifacts
+Xong. Đã tạo SKILL.md để dùng harness như một Claude Code skill.
+
+/vuln-harness <path> làm gì
+Đúng 3 bước bạn chọn, nối tiếp tự động:
+
+Chạy sweep — gọi scanner.py --verify (đọc .env sẵn có), thêm --mode chain nếu nghi deserialization; scan dài thì chạy nền.
+Triage + báo cáo (luôn có) — tôi đọc findings.ndjson, xếp hạng theo severity → verify verdict → confidence, gom theo type/file, xuất bảng tóm tắt + chỉ ra hotspot & chain nguy hiểm, nói rõ đã loại bao nhiêu false positive.
+Deep-dive (top Critical/High đã true_positive) — tôi mở file thật, trace dataflow source→sink (đi từng hop với chain), viết PoC + root cause + fix cụ thể; có git diff thì đẩy sang /security-review.
+/graphify (tùy chọn) — biến findings thành knowledge graph phân cụm.
+Render — report.py -f html.
+Triết lý kết hợp
+Local model gánh phần thô diện rộng (rẻ, riêng tư) → Claude verify phần giá trị cao. Đây chính là điểm mạnh: /security-review một mình sẽ tốn token nếu quét cả repo; harness lọc trước, Claude chỉ soi kỹ số ít điểm sống sót.
+
+Kích hoạt
+Skill nằm trong thư mục tool nên cần cho Claude Code thấy nó:
+
+mkdir "$env:USERPROFILE\.claude\skills\vuln-harness" -Force
+copy SKILL.md "$env:USERPROFILE\.claude\skills\vuln-harness\SKILL.md"
+Rồi gõ /vuln-harness ./path/to/src. Đã ghi hướng dẫn này vào README.
+
+Tóm lại toàn bộ những gì ta đã dựng trong ai-vuln-harness/:
+
+File	Vai trò
+scanner.py	Harness chính: per-file + --mode chain, verify pass, .env, structured mode, custom header
+context.py	Import context (local signatures + dep versions + CVE annotate)
+cve.py	OSV offline/online + GHSA + NVD + native-audit, composite dedupe
+chain.py	Phát hiện gadget/deserialization chain đa file
+fetch_osv.py	Tải OSV DB tự động
+report.py	NDJSON → Markdown/HTML
+SKILL.md	Bọc thành skill /vuln-harness
+.env.example	Mẫu cấu hình
+Muốn tôi copy skill vào ~/.claude/skills luôn để bạn dùng ngay không?
+
+Thêm cả hướng dẫn dùng ghsa, nvd, native audit vào readme nhé!
+
+Đã có bảng tóm tắt rồi, nhưng thiếu hướng dẫn chi tiết (lấy token, cài tool audit, ví dụ cụ thể). Xem lại phần hiện tại rồi bổ sung:
+
+Read
+README.md
+Giờ tìm phần bảng nguồn CVE để chèn hướng dẫn chi tiết ngay sau đó:
+
+Read
+README.md
+(124–149, 210–249)
+Giờ tìm phần bảng nguồn CVE (Fresher/additional) và chèn hướng dẫn chi tiết ngay sau:
+
+
+Read a file, edited a file
+Cập nhật nốt bảng "Useful flags" cho đủ các nguồn mới:
+
+
+Edited a file, ran a command
+Đã thêm hướng dẫn chi tiết cho cả 3 nguồn vào README.md (mục Fresher / additional CVE sources, dòng 62–137):
+
+Nội dung đã bổ sung
+#### GHSA (dòng 85)
+
+Cách lấy Personal Access Token tại github.com/settings/tokens — không cần scope nào (advisory public đọc được với token bất kỳ).
+Ví dụ export token (kèm cú pháp PowerShell $env:GITHUB_TOKEN=...) hoặc set .env.
+Ghi chú: không token → skip có cảnh báo, scan vẫn chạy.
+#### NVD (dòng 103)
+
+API key tùy chọn — link xin key, so sánh rate limit (~5 vs ~50 req/30s), harness tự cache để không vượt.
+Lưu ý NVD map theo CPE nên nhiễu hơn OSV/GHSA → coi là lead, dựa vào fixed/range để xác nhận.
+#### Native audit (dòng 118) — kèm bảng cài đặt tool:
+
+Ecosystem	Tool	Cần	Cài
+PHP	composer audit	composer.lock	sẵn trong Composer 2.4+
+npm	npm audit --json	package-lock.json	sẵn trong npm
+Python	pip-audit	requirements.txt	pipx install pip-audit
+Rust	cargo audit	Cargo.lock	cargo install cargo-audit
+Cùng ghi chú: tự tìm thư mục lockfile, chạy auditor tại đó, log rõ ran: composer audit @ …, thiếu tool thì skip.
+
+Ngoài ra:
+
+Thêm câu giải thích kết quả được merge + dedupe theo CVE/GHSA id, và mỗi finding ghi provider: "osv-online+ghsa+nvd".
+Cập nhật bảng Useful flags đầy đủ: --ghsa/--nvd/--native-audit, --mode chain, --structured, --header.
+Cấu trúc README giờ mạch lạc: bảng tóm tắt → 3 mục hướng dẫn chi tiết → ví dụ kết hợp. Bạn có muốn tôi thêm một mục "Recommended setups" (vd: offline/air-gap dùng gì, có mạng dùng gì) để chốt lại không?
+
+Ý là tôi muốn dùng thêm các skill khác vào harness tool này của tôi ấy
+
+Ý là tôi muốn dùng thêm các skill khác vào harness tool này của tôi trong bước tìm kiếm lỗ hổng trong các file
+
+À hiểu rồi — bạn muốn dùng kiến thức từ các SKILL.md khác (checklist/pattern tìm lỗ hổng) NGAY TRONG bước model review từng file của harness, chứ không phải bọc harness thành skill.
+
+Vấn đề kỹ thuật: scanner.py gọi model local qua HTTP, không chạy trong Claude Code nên không "invoke" skill được. Nhưng skill bản chất là file markdown chứa tri thức — nên cách đúng là nạp nội dung SKILL.md rồi bơm vào system prompt của bước review, có thể scope theo ngôn ngữ file.
+
+Tôi sẽ dựng cơ chế "skill/knowledge pack" cắm được vào bước tìm lỗ hổng. Tạo skills.py:
+
+Created
+skills.py
++143
+-0
+Giờ tích hợp vào scanner. Thêm import + config:
+
+Edited
+scanner.py
++6
+-0
+Giờ sửa scan_one_file để bơm guidance skill (theo đuôi file) vào system prompt của PASS 1:
+
+Edited
+scanner.py
++9
+-2
+Giờ build SkillSet trong run() và truyền xuống (cả 2 nhánh + chain). Xem đoạn dispatch:
+
+
+Read a file, edited a file
+Giờ cập nhật run_chain để nhận skillset và bơm vào CHAIN_SYSTEM:
+
+Edited
+scanner.py
++8
+-2
+Giờ thêm CLI flags + env + Config mapping:
+
+Edited
+scanner.py
++10
+-0
+Giờ tạo một skill knowledge-pack mẫu và test end-to-end (mock) để xác nhận guidance được bơm đúng theo ngôn ngữ:
+
+Created sample skill packs and tested extension scoping
+Scope theo đuôi file chuẩn (.php nhận cả 2, .py chỉ nhận general). Test luôn việc bơm vào system prompt của PASS 1 qua mock:
+
+Verified skill guidance injected into PASS1 system prompt
+Hoạt động trọn vẹn — guidance skill được bơm đúng vào system prompt của bước review. Cập nhật README và .env.example:
+
+
+Edited 2 files, ran a command
+Đúng ý bạn rồi — giờ có thể cắm các skill khác vào bước model review từng file.
+
+Cách hoạt động
+Harness gọi model qua HTTP (không chạy trong Claude Code) nên không invoke skill được. Thay vào đó, skills.py nạp nội dung markdown của SKILL.md rồi bơm vào system prompt của bước tìm lỗ hổng → model local review với chuyên môn của skill đó.
+
+SYSTEM_PROMPT (reviewer gốc)
+  + "ADDITIONAL REVIEW GUIDANCE: ### Skill: php-security ...checklist..."
+  → gửi kèm mỗi file
+Dùng
+python scanner.py ./src \
+    --skill ./skillpacks \
+    --skill ./my-owasp-skill/SKILL.md \
+    -o findings.ndjson -v
+--skill lặp lại được, nhận file (.md/SKILL.md) hoặc thư mục (nạp SKILL.md + *.md top-level). Hoặc .env: AVH_SKILLS=path1,path2.
+Scope theo ngôn ngữ qua frontmatter — skill chỉ áp cho file khớp:
+---
+name: php-security
+extensions: php, phtml     # bỏ trống = áp cho mọi file
+---
+# checklist POP-chain / injection cho PHP...
+File .md thường (không frontmatter) → áp cho mọi file.
+Áp dụng cho cả --mode file lẫn --mode chain. Giới hạn kích thước bằng --skill-budget.
+Đã test
+Nạp 2 skill: general (mọi file) + php-security-checklist (chỉ .php).
+.php → nhận cả 2; .py → chỉ general (skill PHP bị loại đúng).
+Xác nhận guidance thực sự vào system prompt của PASS 1.
+Tất cả 7 module compile sạch. Đã cập nhật README (mục "Inject skills / knowledge packs") + .env.example (AVH_SKILLS, AVH_SKILL_BUDGET) + bảng flags.
+
+Điểm hay: bạn tái dùng được chính các skill tìm lỗ hổng bạn đã có (OWASP checklist, pattern riêng theo dự án…) — tri thức dẫn đường, model local đọc. Muốn tôi tạo sẵn vài skill-pack mẫu (OWASP Top 10, PHP/Python/JS patterns) trong thư mục skillpacks/ để bạn dùng ngay không?

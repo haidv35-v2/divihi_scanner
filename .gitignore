@@ -1,0 +1,6 @@
+.env
+*.ndjson
+*.md.html
+findings.*
+osv-db/
+__pycache__/
